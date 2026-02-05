@@ -7,12 +7,24 @@ import threading
 from pathlib import Path
 
 import evdev
+
+
+def notify(title: str, message: str = "", urgency: str = "normal"):
+    """Send a desktop notification."""
+    try:
+        subprocess.run(
+            ["notify-send", "-u", urgency, "-a", "ToriTalk", title, message],
+            check=True,
+            capture_output=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass  # Notification failed, continue silently
 import numpy as np
 import sounddevice as sd
 from faster_whisper import WhisperModel
 
 # Configuration
-WHISPER_MODEL = "base.en"
+WHISPER_MODEL = "small.en"
 SAMPLE_RATE = 16000
 CHANNELS = 1
 
@@ -66,8 +78,10 @@ class Transcriber:
 
     def __init__(self, model_name: str = WHISPER_MODEL):
         print(f"Loading Whisper model '{model_name}'...")
+        notify("ToriTalk", f"Loading model '{model_name}'... (may download ~3GB)")
         self.model = WhisperModel(model_name, device="cpu", compute_type="int8")
         print("Model loaded.")
+        notify("ToriTalk", "Model loaded. Ready!")
 
     def transcribe(self, audio: np.ndarray) -> str:
         """Transcribe audio array to text."""
@@ -198,6 +212,7 @@ class ToriTalk:
     def _on_hotkey_press(self):
         """Called when Ctrl+Super is pressed."""
         print("Recording...", end="", flush=True)
+        notify("Recording...", "Release to transcribe")
         self.recorder.start()
 
     def _on_hotkey_release(self):
@@ -208,17 +223,21 @@ class ToriTalk:
 
         if duration < 0.3:
             print("Recording too short, skipping.")
+            notify("Recording too short", "Skipped")
             return
 
         print("Transcribing...", end="", flush=True)
+        notify("Transcribing...", f"{duration:.1f}s of audio")
         text = self.transcriber.transcribe(audio)
         print(f" done.")
 
         if text:
             print(f"Text: {text}")
+            notify("Transcribed", text)
             self.typer.type_text(text)
         else:
             print("No speech detected.")
+            notify("No speech detected", "")
 
     def run(self):
         """Run the application."""
