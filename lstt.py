@@ -103,7 +103,7 @@ class Transcriber:
         print("Model loaded.")
         notify("lstt", "Model loaded. Ready!")
 
-    def transcribe(self, audio: np.ndarray, duration: float) -> TranscriptionResult:
+    def transcribe(self, audio: np.ndarray, duration: float, on_segment=None) -> TranscriptionResult:
         """Transcribe audio array to text with confidence info."""
         if len(audio) == 0:
             return TranscriptionResult("", 0.0, 1.0, duration, datetime.now().strftime("%H:%M:%S"))
@@ -116,6 +116,8 @@ class Transcriber:
             texts.append(segment.text)
             logprobs.append(segment.avg_logprob)
             no_speech_probs.append(segment.no_speech_prob)
+            if on_segment:
+                on_segment(" ".join(texts).strip())
 
         text = " ".join(texts).strip()
         avg_logprob = sum(logprobs) / len(logprobs) if logprobs else 0.0
@@ -201,12 +203,13 @@ class RecordingIndicator:
         )
         self.window.show_all()
 
-    def show_transcribing(self):
-        GLib.idle_add(self._show_transcribing)
+    def show_transcribing(self, text=""):
+        GLib.idle_add(self._show_transcribing, text)
 
-    def _show_transcribing(self):
+    def _show_transcribing(self, text):
+        display = GLib.markup_escape_text(text) if text else "..."
         self.label.set_markup(
-            '<span color="#ffaa00">⟳</span>  Transcribing...'
+            f'<span color="#ffaa00">⟳</span>  {display}'
         )
         self.window.show_all()
 
@@ -322,7 +325,9 @@ class Lstt:
 
         print("Transcribing...", end="", flush=True)
         self.indicator.show_transcribing()
-        result = self.transcriber.transcribe(audio, duration)
+        result = self.transcriber.transcribe(
+            audio, duration, on_segment=self.indicator.show_transcribing
+        )
         print(f" done.")
         self.indicator.hide()
 
