@@ -4,9 +4,14 @@
 import subprocess
 import sys
 import threading
-from pathlib import Path
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime
 
 import evdev
+import numpy as np
+import sounddevice as sd
+from faster_whisper import WhisperModel
 
 
 def notify(title: str, message: str = "", urgency: str = "normal"):
@@ -19,14 +24,23 @@ def notify(title: str, message: str = "", urgency: str = "normal"):
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass  # Notification failed, continue silently
-import numpy as np
-import sounddevice as sd
-from faster_whisper import WhisperModel
 
 # Configuration
 WHISPER_MODEL = "small.en"
 SAMPLE_RATE = 16000
 CHANNELS = 1
+LOW_CONFIDENCE_LOGPROB = -1.0
+HIGH_NO_SPEECH_PROB = 0.6
+
+
+@dataclass
+class TranscriptionResult:
+    text: str
+    avg_logprob: float
+    no_speech_prob: float
+    duration: float
+    timestamp: str
+
 
 # Key codes
 KEY_LEFTCTRL = 29
@@ -83,14 +97,25 @@ class Transcriber:
         print("Model loaded.")
         notify("lstt", "Model loaded. Ready!")
 
-    def transcribe(self, audio: np.ndarray) -> str:
-        """Transcribe audio array to text."""
+    def transcribe(self, audio: np.ndarray, duration: float) -> TranscriptionResult:
+        """Transcribe audio array to text with confidence info."""
         if len(audio) == 0:
-            return ""
+            return TranscriptionResult("", 0.0, 1.0, duration, datetime.now().strftime("%H:%M:%S"))
 
         segments, _ = self.model.transcribe(audio, beam_size=5)
-        text = " ".join(segment.text for segment in segments)
-        return text.strip()
+        texts = []
+        logprobs = []
+        no_speech_probs = []
+        for segment in segments:
+            texts.append(segment.text)
+            logprobs.append(segment.avg_logprob)
+            no_speech_probs.append(segment.no_speech_prob)
+
+        text = " ".join(texts).strip()
+        avg_logprob = sum(logprobs) / len(logprobs) if logprobs else 0.0
+        max_no_speech = max(no_speech_probs) if no_speech_probs else 1.0
+
+        return TranscriptionResult(text, avg_logprob, max_no_speech, duration, datetime.now().strftime("%H:%M:%S"))
 
 
 class TextTyper:
@@ -204,6 +229,7 @@ class Lstt:
         self.recorder = AudioRecorder()
         self.transcriber = Transcriber()
         self.typer = TextTyper()
+        self.history: deque[TranscriptionResult] = deque(maxlen=8)
         self.monitor = HotkeyMonitor(
             on_press=self._on_hotkey_press,
             on_release=self._on_hotkey_release,
@@ -227,17 +253,34 @@ class Lstt:
             return
 
         print("Transcribing...", end="", flush=True)
-        notify("Transcribing...", f"{duration:.1f}s of audio")
-        text = self.transcriber.transcribe(audio)
+        result = self.transcriber.transcribe(audio, duration)
         print(f" done.")
 
-        if text:
-            print(f"Text: {text}")
-            notify("Transcribed", text)
-            self.typer.type_text(text)
+        if result.text:
+            self.history.append(result)
+            low_confidence = (
+                result.avg_logprob < LOW_CONFIDENCE_LOGPROB
+                or result.no_speech_prob > HIGH_NO_SPEECH_PROB
+            )
+            if low_confidence:
+                print(f"Text (low confidence): {result.text}")
+                notify("Low confidence", result.text, urgency="low")
+            else:
+                print(f"Text: {result.text}")
+                notify("Transcribed", result.text)
+            self.typer.type_text(result.text)
+            self._print_history()
         else:
             print("No speech detected.")
             notify("No speech detected", "")
+
+    def _print_history(self):
+        """Print recent transcription history to console."""
+        print(f"\n--- History ({len(self.history)}/8) ---")
+        for r in self.history:
+            confidence = "!" if r.avg_logprob < LOW_CONFIDENCE_LOGPROB or r.no_speech_prob > HIGH_NO_SPEECH_PROB else " "
+            print(f"  [{r.timestamp}] {confidence} ({r.duration:.1f}s) {r.text}")
+        print()
 
     def run(self):
         """Run the application."""
