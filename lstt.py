@@ -427,6 +427,7 @@ class Lstt:
 
 
 def main():
+    Gtk.init([])
     signal.signal(signal.SIGINT, lambda *_: Gtk.main_quit())
     app = Lstt()
     app.run()
