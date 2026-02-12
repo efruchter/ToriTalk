@@ -147,6 +147,44 @@ class TextTyper:
             print("ydotool not found. Install with: sudo apt install ydotool")
 
 
+class AudioDucker:
+    """Ducks system audio volume during recording via PipeWire/wpctl."""
+
+    DUCK_VOLUME = "20%"
+
+    def __init__(self):
+        self.original_volume = None
+
+    def duck(self):
+        try:
+            result = subprocess.run(
+                ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                capture_output=True, text=True,
+            )
+            # Output like "Volume: 0.50" or "Volume: 0.50 [MUTED]"
+            parts = result.stdout.strip().split()
+            if len(parts) >= 2:
+                self.original_volume = parts[1]
+            subprocess.run(
+                ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", self.DUCK_VOLUME],
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            pass
+
+    def restore(self):
+        if self.original_volume is None:
+            return
+        try:
+            subprocess.run(
+                ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", self.original_volume],
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            pass
+        self.original_volume = None
+
+
 class RecordingIndicator:
     """Floating overlay indicator using GTK Layer Shell."""
 
@@ -299,6 +337,7 @@ class Lstt:
         self.transcriber = Transcriber()
         self.typer = TextTyper()
         self.indicator = RecordingIndicator()
+        self.ducker = AudioDucker()
         self.history: deque[TranscriptionResult] = deque(maxlen=8)
         self.monitor = HotkeyMonitor(
             on_press=self._on_hotkey_press,
@@ -308,6 +347,7 @@ class Lstt:
     def _on_hotkey_press(self):
         """Called when Ctrl+Super is pressed."""
         print("Recording...", end="", flush=True)
+        self.ducker.duck()
         self.indicator.show_recording()
         self.recorder.start()
 
@@ -319,6 +359,7 @@ class Lstt:
 
         if duration < 0.3:
             print("Recording too short, skipping.")
+            self.ducker.restore()
             self.indicator.hide()
             notify("Recording too short", "Skipped")
             return
@@ -329,6 +370,7 @@ class Lstt:
             audio, duration, on_segment=self.indicator.show_transcribing
         )
         print(f" done.")
+        self.ducker.restore()
         self.indicator.hide()
 
         if result.text:
