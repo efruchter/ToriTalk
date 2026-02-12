@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """lstt - Push-to-talk speech transcription for Linux/Wayland."""
 
+import os
 import signal
 import subprocess
 import sys
@@ -8,6 +9,8 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+
+os.environ.setdefault("GDK_BACKEND", "wayland")
 
 import evdev
 import gi
@@ -17,8 +20,14 @@ from faster_whisper import WhisperModel
 
 gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
-gi.require_version("GtkLayerShell", "0.1")
-from gi.repository import Gdk, GLib, Gtk, GtkLayerShell
+from gi.repository import Gdk, GLib, Gtk
+
+try:
+    gi.require_version("GtkLayerShell", "0.1")
+    from gi.repository import GtkLayerShell
+    HAS_LAYER_SHELL = GtkLayerShell.is_supported()
+except (ValueError, ImportError):
+    HAS_LAYER_SHELL = False
 
 
 def notify(title: str, message: str = "", urgency: str = "normal"):
@@ -207,7 +216,6 @@ class RecordingIndicator:
     """
 
     def __init__(self):
-        # Load CSS
         css_provider = Gtk.CssProvider()
         css_provider.load_from_data(self.CSS.encode())
         Gtk.StyleContext.add_provider_for_screen(
@@ -217,15 +225,25 @@ class RecordingIndicator:
         )
 
         self.window = Gtk.Window()
-        GtkLayerShell.init_for_window(self.window)
-        GtkLayerShell.set_layer(self.window, GtkLayerShell.Layer.OVERLAY)
-        GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.TOP, True)
-        GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.RIGHT, True)
-        GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.TOP, 24)
-        GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.RIGHT, 24)
-        GtkLayerShell.set_keyboard_mode(
-            self.window, GtkLayerShell.KeyboardMode.NONE
-        )
+
+        if HAS_LAYER_SHELL:
+            GtkLayerShell.init_for_window(self.window)
+            GtkLayerShell.set_layer(self.window, GtkLayerShell.Layer.OVERLAY)
+            GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.TOP, True)
+            GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.RIGHT, True)
+            GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.TOP, 24)
+            GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.RIGHT, 24)
+            GtkLayerShell.set_keyboard_mode(
+                self.window, GtkLayerShell.KeyboardMode.NONE
+            )
+        else:
+            self.window.set_decorated(False)
+            self.window.set_keep_above(True)
+            self.window.set_accept_focus(False)
+            self.window.set_gravity(Gdk.Gravity.NORTH_EAST)
+            self.window.move(
+                Gdk.Screen.get_default().get_width() - 200, 24
+            )
 
         self.label = Gtk.Label()
         self.label.get_style_context().add_class("indicator")
