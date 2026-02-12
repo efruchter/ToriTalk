@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 
-os.environ.setdefault("GDK_BACKEND", "wayland")
+
 
 import evdev
 import gi
